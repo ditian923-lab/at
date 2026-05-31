@@ -189,13 +189,21 @@ function renderShell() {
 function renderPool() {
   const pool = state.data.pool || {};
   const official = pool.official || {};
+  const officialRequests = Number(official.requestCount || 0);
+  const localRequests = Number(pool.requestCount || 0);
+  const tokenText = official.hasTokenUsage
+    ? compactNumber(official.totalOfficialTokens || 0)
+    : compactNumber(pool.totalTokens || 0);
   $("#poolBaseUrl").textContent = pool.baseUrl || "http://localhost:3131/pool/v1";
   $("#poolApiKey").textContent = pool.apiKey || "123456";
   $("#poolUpstream").textContent = pool.upstreamBaseUrl || "https://llm.atxp.ai/v1";
   $("#poolKeyCount").textContent = pool.keyCount ?? 0;
-  $("#poolRequestCount").textContent = pool.requestCount ?? 0;
-  $("#poolSuccessRate").textContent = `${pool.successRate ?? 0}%`;
-  $("#poolTotalTokens").textContent = compactNumber(pool.totalTokens || 0);
+  $("#poolRequestCount").textContent = officialRequests || localRequests || 0;
+  $("#poolRequestLabel").textContent = officialRequests ? "官方流水" : "本地代理记录";
+  $("#poolSuccessRate").textContent = `${officialRequests ? official.successRate || 0 : pool.successRate || 0}%`;
+  $("#poolSuccessLabel").textContent = officialRequests ? "官方流水" : "最近 100 条";
+  $("#poolTotalTokens").textContent = tokenText;
+  $("#poolTokenLabel").textContent = official.hasTokenUsage ? "官方流水" : "官方未返回，显示本地";
   $("#poolRemoteBalance").textContent = formatMoney(official.totalBalance);
   $("#poolRemoteStatus").textContent = official.checking
     ? "同步中"
@@ -217,6 +225,12 @@ function renderAccountCards() {
       const keyReady = Boolean(session.connectionStringMasked);
       const stats = getAccountStats(session.email);
       const official = session.official || {};
+      const officialRequests = Number(official.transactions?.requestCount || 0);
+      const officialSuccessRate = Number(official.transactions?.successRate || 0);
+      const tokenValue = official.transactions?.hasTokenUsage
+        ? compactNumber(official.transactions?.totalTokens || 0)
+        : compactNumber(stats?.totalTokens || 0);
+      const tokenLabel = official.transactions?.hasTokenUsage ? "官方 Tokens" : "本地 Tokens";
       const statusText = official.checking ? "同步中" : keyReady && official.ok ? "可用" : keyReady ? "池中" : "无 Key";
       const statusClass = keyReady && !official.lastError ? "status-success" : keyReady ? "status-running" : "status-queued";
       const officialError = official.lastError ? `<p class="sync-error">${escapeHtml(official.lastError)}</p>` : "";
@@ -234,16 +248,16 @@ function renderAccountCards() {
 
         <div class="health-box">
           <div>
-            <span>请求</span>
-            <strong>${stats?.requestCount || 0}</strong>
+            <span>官方请求</span>
+            <strong>${officialRequests || stats?.requestCount || 0}</strong>
           </div>
           <div>
-            <span>Tokens</span>
-            <strong>${compactNumber(stats?.totalTokens || 0)}</strong>
+            <span>成功率</span>
+            <strong>${officialRequests ? `${officialSuccessRate}%` : "-"}</strong>
           </div>
           <div>
-            <span>最近状态</span>
-            <strong>${stats?.lastStatus || "-"}</strong>
+            <span>${tokenLabel}</span>
+            <strong>${tokenValue}</strong>
           </div>
         </div>
 

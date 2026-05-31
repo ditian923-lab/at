@@ -400,8 +400,18 @@ function normalizeTransactions(data) {
   return {
     items,
     count: rawItems.length,
+    requestCount: items.filter((item) => item.direction === "outgoing").length,
+    successCount: items.filter((item) => item.direction === "outgoing" && item.status === "success").length,
+    failureCount: items.filter((item) => item.direction === "outgoing" && item.status && item.status !== "success")
+      .length,
+    successRate: (() => {
+      const requests = items.filter((item) => item.direction === "outgoing");
+      if (!requests.length) return 0;
+      return Math.round((requests.filter((item) => item.status === "success").length / requests.length) * 1000) / 10;
+    })(),
     spent: roundMoney(spent),
     totalTokens: items.reduce((sum, item) => sum + toNumber(item.totalTokens), 0),
+    hasTokenUsage: items.some((item) => toNumber(item.totalTokens) > 0),
     lastAt: items[0]?.createdAt || "",
   };
 }
@@ -494,11 +504,21 @@ function getOfficialSummary(sessions) {
     totalCount: statuses.length,
     okCount: ok.length,
     checking: officialSyncInFlight || statuses.some((status) => status.checking),
+    requestCount: statuses.reduce((sum, status) => sum + toNumber(status.transactions?.requestCount), 0),
+    successCount: statuses.reduce((sum, status) => sum + toNumber(status.transactions?.successCount), 0),
+    failureCount: statuses.reduce((sum, status) => sum + toNumber(status.transactions?.failureCount), 0),
+    successRate: (() => {
+      const requests = statuses.reduce((sum, status) => sum + toNumber(status.transactions?.requestCount), 0);
+      if (!requests) return 0;
+      const success = statuses.reduce((sum, status) => sum + toNumber(status.transactions?.successCount), 0);
+      return Math.round((success / requests) * 1000) / 10;
+    })(),
     totalBalance: roundMoney(ok.reduce((sum, status) => sum + toNumber(status.balance?.total), 0)),
     totalSpentRecent: roundMoney(
       statuses.reduce((sum, status) => sum + toNumber(status.transactions?.spent), 0),
     ),
     totalOfficialTokens: statuses.reduce((sum, status) => sum + toNumber(status.transactions?.totalTokens), 0),
+    hasTokenUsage: statuses.some((status) => status.transactions?.hasTokenUsage),
     lastSyncedAt: syncedTimes[syncedTimes.length - 1] || "",
   };
 }
