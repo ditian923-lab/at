@@ -864,7 +864,15 @@ async function testPoolModels() {
 function emitChanged() {
   const payload = `data: ${JSON.stringify({ type: "changed", at: nowIso() })}\n\n`;
   for (const res of eventClients) {
-    res.write(payload);
+    try {
+      if (res.destroyed || res.writableEnded) {
+        eventClients.delete(res);
+        continue;
+      }
+      res.write(payload);
+    } catch {
+      eventClients.delete(res);
+    }
   }
 }
 
@@ -1100,6 +1108,7 @@ async function route(req, res) {
       res.write(`data: ${JSON.stringify({ type: "connected", at: nowIso() })}\n\n`);
       eventClients.add(res);
       req.on("close", () => eventClients.delete(res));
+      res.on("error", () => eventClients.delete(res));
       return;
     }
 
