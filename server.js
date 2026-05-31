@@ -11,11 +11,19 @@ const SESSIONS_DIR = path.join(ROOT, "sessions");
 const PORT = Number(process.env.PORT || 3131);
 const LLM_BASE_URL = "https://llm.atxp.ai/v1";
 const POOL_API_KEY = process.env.POOL_API_KEY || "123456";
+const OFFICIAL_SYNC_INTERVAL_MS = Math.max(15000, Number(process.env.OFFICIAL_SYNC_INTERVAL_MS || 60000));
+const OFFICIAL_FETCH_TIMEOUT_MS = Math.max(5000, Number(process.env.OFFICIAL_FETCH_TIMEOUT_MS || 15000));
+const OFFICIAL_TRANSACTION_LIMIT = Math.max(
+  1,
+  Math.min(50, Number(process.env.OFFICIAL_TRANSACTION_LIMIT || 10)),
+);
 
 const jobs = new Map();
 const eventClients = new Set();
 const poolRequests = [];
+const officialStatusCache = new Map();
 let poolCursor = 0;
+let officialSyncInFlight = false;
 
 function nowIso() {
   return new Date().toISOString();
@@ -33,6 +41,16 @@ function maskSecret(value) {
   if (!value) return "";
   if (value.length <= 12) return `${value.slice(0, 3)}...${value.slice(-3)}`;
   return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+function toNumber(value, fallback = 0) {
+  const normalized = typeof value === "string" ? value.replace(/[$,\s]/g, "") : value;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function roundMoney(value) {
+  return Math.round(toNumber(value) * 100) / 100;
 }
 
 function parseEmail(line) {
@@ -67,12 +85,33 @@ function readSessionByEmail(email) {
   return shapeSession(data, fileName);
 }
 
+function publicOfficialStatus(email) {
+  return (
+    officialStatusCache.get(email) || {
+      email,
+      ok: false,
+      checking: false,
+      checkedAt: "",
+      balance: null,
+      transactions: {
+        items: [],
+        count: 0,
+        spent: 0,
+        totalTokens: 0,
+        lastAt: "",
+      },
+      lastError: "尚未同步",
+    }
+  );
+}
+
 function shapeSession(data, fileName) {
   const connectionString = data?.developer?.connectionString || "";
   const connectionToken = data?.developer?.connectionToken || data?.developer?.connection?.connectionToken || "";
   const atxpAccountId = data?.developer?.atxpAccountId || data?.developer?.connection?.atxpAccountId || "";
+  const email = data.email || "";
   return {
-    email: data.email || "",
+    email,
     createdAt: data.createdAt || "",
     fileName,
     llmBaseUrl: LLM_BASE_URL,
@@ -85,6 +124,7 @@ function shapeSession(data, fileName) {
     connectionStringMasked: connectionString
       ? connectionString.replace(connectionToken, maskSecret(connectionToken))
       : "",
+    official: publicOfficialStatus(email),
   };
 }
 
@@ -213,6 +253,224 @@ function extractErrorMessage(text) {
   }
 }
 
+function getConnectionParts(connectionString) {
+  try {
+    const url = new URL(connectionString);
+    return {
+      baseUrl: `${url.protocol}//${url.host}`,
+      token: url.searchParams.get("connection_token") || "",
+    };
+  } catch {
+    return { baseUrl: "", token: "" };
+  }
+}
+
+function makeConnectionAuthHeaders(connectionString) {
+  const { token } = getConnectionParts(connectionString);
+  if (!token) {
+    throw new Error("connection_token 缺失");
+  }
+  return {
+    authorization: `Basic ${Buffer.from(`${token}:`).toString("base64")}`,
+    "content-type": "application/json",
+  };
+}
+
+async function fetchJsonWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OFFICIAL_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!response.ok) {
+      const message = data?.error?.message || data?.error || data?.message || text || response.statusText;
+      const error = new Error(`${response.status} ${response.statusText}: ${String(message).slice(0, 220)}`);
+      error.status = response.status;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("官方接口查询超时");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeBalance(data) {
+  const balance = data?.balance || data || {};
+  const usdc = toNumber(balance.usdc ?? balance.totalUsdc ?? balance.usdcBalance ?? balance.usd);
+  const iou = toNumber(balance.iou ?? balance.totalIou ?? balance.iouBalance);
+  const explicitTotal = balance.total ?? balance.totalUsd ?? balance.totalBalance ?? data?.total;
+  const total = explicitTotal == null ? usdc + iou : toNumber(explicitTotal);
+  return {
+    total: roundMoney(total),
+    usdc: roundMoney(usdc),
+    iou: roundMoney(iou),
+  };
+}
+
+function pickTokenUsage(value) {
+  const usage = value?.usage || value?.metadata?.usage || value?.details?.usage || value || {};
+  const promptTokens = toNumber(usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens ?? usage.inputTokens);
+  const completionTokens = toNumber(
+    usage.completion_tokens ?? usage.completionTokens ?? usage.output_tokens ?? usage.outputTokens,
+  );
+  const totalTokens = toNumber(
+    usage.total_tokens ?? usage.totalTokens ?? usage.tokens ?? usage.tokenCount,
+    promptTokens + completionTokens,
+  );
+  return { promptTokens, completionTokens, totalTokens };
+}
+
+function normalizeTransactions(data) {
+  const rawItems = Array.isArray(data?.transactions)
+    ? data.transactions
+    : Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data)
+        ? data
+        : [];
+  const items = rawItems.slice(0, OFFICIAL_TRANSACTION_LIMIT).map((item) => {
+    const usage = pickTokenUsage(item);
+    const amount = roundMoney(item.amount ?? item.usd ?? item.cost ?? item.value ?? 0);
+    return {
+      id: String(item.id || item.transactionId || item.hash || ""),
+      type: String(item.type || item.kind || item.category || ""),
+      amount,
+      description: String(item.description || item.memo || item.reason || item.model || ""),
+      model: String(item.model || item.metadata?.model || item.details?.model || ""),
+      status: String(item.status || ""),
+      createdAt: item.createdAt || item.created_at || item.date || item.timestamp || "",
+      ...usage,
+    };
+  });
+
+  const spent = items.reduce((sum, item) => {
+    const text = `${item.type} ${item.description}`.toLowerCase();
+    if (item.amount < 0) return sum + Math.abs(item.amount);
+    if (/(spend|spent|usage|debit|charge|consume|payment|call|request)/i.test(text)) {
+      return sum + Math.abs(item.amount);
+    }
+    return sum;
+  }, 0);
+
+  return {
+    items,
+    count: rawItems.length,
+    spent: roundMoney(spent),
+    totalTokens: items.reduce((sum, item) => sum + toNumber(item.totalTokens), 0),
+    lastAt: items[0]?.createdAt || "",
+  };
+}
+
+async function fetchOfficialStatusForSession(session) {
+  const checkedAt = nowIso();
+  if (!session?.connectionString) {
+    return {
+      email: session?.email || "",
+      ok: false,
+      checking: false,
+      checkedAt,
+      balance: null,
+      transactions: normalizeTransactions([]),
+      lastError: "没有可查询的 Key",
+    };
+  }
+
+  const { baseUrl, token } = getConnectionParts(session.connectionString);
+  if (!baseUrl || !token) {
+    return {
+      email: session.email,
+      ok: false,
+      checking: false,
+      checkedAt,
+      balance: null,
+      transactions: normalizeTransactions([]),
+      lastError: "connection string 格式不完整",
+    };
+  }
+
+  const headers = makeConnectionAuthHeaders(session.connectionString);
+  const [balanceResult, transactionsResult] = await Promise.allSettled([
+    fetchJsonWithTimeout(`${baseUrl}/balance`, { headers }),
+    fetchJsonWithTimeout(`${baseUrl}/api/transactions?limit=${OFFICIAL_TRANSACTION_LIMIT}`, { headers }),
+  ]);
+
+  const balanceOk = balanceResult.status === "fulfilled";
+  const transactionsOk = transactionsResult.status === "fulfilled";
+  const errors = [];
+  if (!balanceOk) errors.push(`余额：${balanceResult.reason.message}`);
+  if (!transactionsOk) errors.push(`流水：${transactionsResult.reason.message}`);
+
+  return {
+    email: session.email,
+    accountId: session.atxpAccountId || "",
+    ok: balanceOk || transactionsOk,
+    checking: false,
+    checkedAt,
+    balance: balanceOk ? normalizeBalance(balanceResult.value) : null,
+    transactions: transactionsOk ? normalizeTransactions(transactionsResult.value) : normalizeTransactions([]),
+    lastError: errors.join("；"),
+  };
+}
+
+async function refreshOfficialStatuses(email = "") {
+  if (officialSyncInFlight) {
+    return { ok: false, running: true, statuses: Array.from(officialStatusCache.values()) };
+  }
+
+  const sessions = email ? [readSessionByEmail(email)].filter(Boolean) : listPoolSessions();
+  officialSyncInFlight = true;
+  try {
+    const statuses = [];
+    for (const session of sessions) {
+      officialStatusCache.set(session.email, {
+        ...publicOfficialStatus(session.email),
+        email: session.email,
+        checking: true,
+      });
+      emitChanged();
+
+      const status = await fetchOfficialStatusForSession(session);
+      officialStatusCache.set(session.email, status);
+      statuses.push(status);
+      emitChanged();
+    }
+    return { ok: true, running: false, statuses };
+  } finally {
+    officialSyncInFlight = false;
+  }
+}
+
+function getOfficialSummary(sessions) {
+  const statuses = sessions.map((session) => publicOfficialStatus(session.email));
+  const synced = statuses.filter((status) => status.checkedAt);
+  const ok = statuses.filter((status) => status.ok);
+  const syncedTimes = synced.map((status) => status.checkedAt).sort();
+  return {
+    totalCount: statuses.length,
+    okCount: ok.length,
+    checking: officialSyncInFlight || statuses.some((status) => status.checking),
+    totalBalance: roundMoney(ok.reduce((sum, status) => sum + toNumber(status.balance?.total), 0)),
+    totalSpentRecent: roundMoney(
+      statuses.reduce((sum, status) => sum + toNumber(status.transactions?.spent), 0),
+    ),
+    totalOfficialTokens: statuses.reduce((sum, status) => sum + toNumber(status.transactions?.totalTokens), 0),
+    lastSyncedAt: syncedTimes[syncedTimes.length - 1] || "",
+  };
+}
+
 function recordPoolRequest(entry) {
   poolRequests.unshift({
     id: makeId(),
@@ -262,6 +520,7 @@ function getPoolInfo() {
     requestCount: stats.requestCount,
     successRate: stats.successRate,
     totalTokens: stats.totalTokens,
+    official: getOfficialSummary(sessions),
     stats,
     requests: poolRequests.slice(0, 60),
   };
@@ -885,6 +1144,12 @@ async function route(req, res) {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/api/official/refresh") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      writeJson(res, 200, await refreshOfficialStatuses(String(body.email || "").trim()));
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/api/export.txt") {
       const lines = listSessions()
         .filter((item) => item.connectionString)
@@ -911,6 +1176,21 @@ async function route(req, res) {
 
 fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
+function startOfficialSyncLoop() {
+  setTimeout(() => {
+    refreshOfficialStatuses().catch((error) => {
+      console.warn(`Official status sync failed: ${error.message}`);
+    });
+  }, 2000).unref?.();
+
+  setInterval(() => {
+    refreshOfficialStatuses().catch((error) => {
+      console.warn(`Official status sync failed: ${error.message}`);
+    });
+  }, OFFICIAL_SYNC_INTERVAL_MS).unref?.();
+}
+
 http.createServer(route).listen(PORT, () => {
   console.log(`ATXP register console is running: http://localhost:${PORT}`);
+  startOfficialSyncLoop();
 });

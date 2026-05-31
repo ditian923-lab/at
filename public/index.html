@@ -87,6 +87,11 @@
               <strong id="poolTotalTokens">0</strong>
               <small>已记录用量</small>
             </article>
+            <article class="metric-card">
+              <span>官方余额</span>
+              <strong id="poolRemoteBalance">-</strong>
+              <small id="poolRemoteStatus">未同步</small>
+            </article>
           </section>
 
           <section class="section-panel">
@@ -95,7 +100,10 @@
                 <h2>账号资产</h2>
                 <p>sessions 目录中的可用账号。</p>
               </div>
-              <button id="refreshPoolButton" class="soft-button" type="button">刷新</button>
+              <div class="button-row">
+                <button id="refreshOfficialButton" class="soft-button" type="button">同步余额/流水</button>
+                <button id="refreshPoolButton" class="soft-button" type="button">刷新</button>
+              </div>
             </div>
             <div id="accountCards" class="account-grid"></div>
           </section>

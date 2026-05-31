@@ -442,7 +442,7 @@ select:focus {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
   margin-top: 16px;
 }
@@ -563,6 +563,83 @@ select:focus {
   overflow: hidden;
   color: #ffffff;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.official-box {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(73, 168, 255, 0.08);
+}
+
+.official-box.official-ok {
+  border-color: rgba(24, 216, 144, 0.24);
+  background: rgba(24, 216, 144, 0.08);
+}
+
+.official-box.official-loading {
+  border-color: rgba(255, 190, 85, 0.28);
+  background: rgba(255, 190, 85, 0.08);
+}
+
+.official-box div {
+  min-width: 0;
+}
+
+.official-box span,
+.mini-transaction-row span,
+.mini-transaction-row em {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.official-box strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #ffffff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-error {
+  margin: -4px 0 0;
+  color: #ffb3bd;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.mini-transactions {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: #0b1220;
+}
+
+.mini-transaction-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.mini-transaction-row strong {
+  overflow: hidden;
+  color: #dbe8f4;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-transaction-row em {
+  font-style: normal;
   white-space: nowrap;
 }
 
@@ -922,7 +999,8 @@ tbody tr:hover {
   .endpoint-grid,
   .metric-grid,
   .options-grid,
-  .account-grid {
+  .account-grid,
+  .official-box {
     grid-template-columns: 1fr;
   }
 

@@ -66,6 +66,25 @@ function compactNumber(value) {
   return String(number);
 }
 
+function formatMoney(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `$${number.toFixed(2)}`;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "未同步";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未同步";
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "刚刚";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
 function showToast(message) {
   const toast = $("#toast");
   toast.textContent = message;
@@ -119,6 +138,29 @@ function getAccountStats(email) {
   return state.data.pool?.stats?.accounts?.find((item) => item.email === email) || null;
 }
 
+function renderRecentOfficialTransactions(official) {
+  const items = official?.transactions?.items || [];
+  if (!items.length) {
+    return `<div class="mini-transactions muted">暂无官方流水</div>`;
+  }
+  return `<div class="mini-transactions">
+    ${items
+      .slice(0, 3)
+      .map((item) => {
+        const title = item.model || item.description || item.type || "调用记录";
+        const meta = [formatMoney(item.amount), compactNumber(item.totalTokens || 0) + " tokens"]
+          .filter(Boolean)
+          .join(" · ");
+        return `<div class="mini-transaction-row">
+          <span>${escapeHtml(formatTime(item.createdAt))}</span>
+          <strong>${escapeHtml(title)}</strong>
+          <em>${escapeHtml(meta)}</em>
+        </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
 function renderShell() {
   const isPool = state.activeView === "pool";
   $("#poolView").classList.toggle("active-view", isPool);
@@ -136,6 +178,7 @@ function renderShell() {
 
 function renderPool() {
   const pool = state.data.pool || {};
+  const official = pool.official || {};
   $("#poolBaseUrl").textContent = pool.baseUrl || "http://localhost:3131/pool/v1";
   $("#poolApiKey").textContent = pool.apiKey || "123456";
   $("#poolUpstream").textContent = pool.upstreamBaseUrl || "https://llm.atxp.ai/v1";
@@ -143,6 +186,10 @@ function renderPool() {
   $("#poolRequestCount").textContent = pool.requestCount ?? 0;
   $("#poolSuccessRate").textContent = `${pool.successRate ?? 0}%`;
   $("#poolTotalTokens").textContent = compactNumber(pool.totalTokens || 0);
+  $("#poolRemoteBalance").textContent = formatMoney(official.totalBalance);
+  $("#poolRemoteStatus").textContent = official.checking
+    ? "同步中"
+    : `${official.okCount || 0}/${official.totalCount || 0} 已同步`;
   renderAccountCards();
   renderRequestRows();
 }
@@ -159,8 +206,10 @@ function renderAccountCards() {
     .map((session) => {
       const keyReady = Boolean(session.connectionStringMasked);
       const stats = getAccountStats(session.email);
-      const statusText = keyReady ? "池中" : "无 Key";
-      const statusClass = keyReady ? "status-success" : "status-queued";
+      const official = session.official || {};
+      const statusText = official.checking ? "同步中" : keyReady && official.ok ? "可用" : keyReady ? "池中" : "无 Key";
+      const statusClass = keyReady && !official.lastError ? "status-success" : keyReady ? "status-running" : "status-queued";
+      const officialError = official.lastError ? `<p class="sync-error">${escapeHtml(official.lastError)}</p>` : "";
       return `<article class="account-card">
         <div class="account-head">
           <div>
@@ -187,6 +236,27 @@ function renderAccountCards() {
             <strong>${stats?.lastStatus || "-"}</strong>
           </div>
         </div>
+
+        <div class="official-box ${official.ok ? "official-ok" : official.checking ? "official-loading" : ""}">
+          <div>
+            <span>官方余额</span>
+            <strong>${formatMoney(official.balance?.total)}</strong>
+          </div>
+          <div>
+            <span>近期消费</span>
+            <strong>${formatMoney(official.transactions?.spent)}</strong>
+          </div>
+          <div>
+            <span>官方 Tokens</span>
+            <strong>${compactNumber(official.transactions?.totalTokens || 0)}</strong>
+          </div>
+          <div>
+            <span>同步</span>
+            <strong>${escapeHtml(formatRelativeTime(official.checkedAt))}</strong>
+          </div>
+        </div>
+        ${officialError}
+        ${renderRecentOfficialTransactions(official)}
 
         <div class="code-stack">
           <div class="kv-row">
@@ -390,6 +460,20 @@ async function testPool() {
   showToast(`号池测试失败：${result.status} ${result.error || ""}`);
 }
 
+async function refreshOfficialStatus() {
+  const result = await fetchJson("/api/official/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (result.running) {
+    showToast("官方状态正在同步中");
+  } else {
+    showToast(`官方状态已同步：${result.statuses?.length || 0} 个账号`);
+  }
+  await refreshState();
+}
+
 async function startJob(event) {
   event.preventDefault();
   const payload = {
@@ -434,6 +518,7 @@ function bindEvents() {
   $("#stopButton").addEventListener("click", stopActiveJob);
   $("#refreshButton").addEventListener("click", refreshState);
   $("#refreshPoolButton").addEventListener("click", refreshState);
+  $("#refreshOfficialButton").addEventListener("click", refreshOfficialStatus);
   $("#copyPoolBaseButton").addEventListener("click", () => {
     copyText($("#poolBaseUrl").textContent, "号池 Base URL 已复制");
   });
