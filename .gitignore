@@ -1,0 +1,25 @@
+# Sensitive runtime outputs
+sessions/
+accounts.txt
+*.account.txt
+*.accounts.txt
+*.env
+.env*
+
+# Local shortcuts and UI preview artifacts
+*.lnk
+previews/
+
+# Runtime logs and temporary files
+*.log
+*.tmp
+tmp/
+
+# Dependencies and editor state
+node_modules/
+.vscode/
+.idea/
+
+# OS metadata
+Thumbs.db
+Desktop.ini

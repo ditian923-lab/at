@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATXP 控制台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <div class="brand-mark">A</div>
+          <div>
+            <strong>ATXP</strong>
+            <span>Pool Console</span>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item active" type="button" data-view="pool">
+            <span class="nav-icon">P</span>
+            <span>号池管理</span>
+          </button>
+          <button class="nav-item" type="button" data-view="register">
+            <span class="nav-icon">R</span>
+            <span>注册任务</span>
+          </button>
+        </nav>
+      </aside>
+
+      <main class="main-shell">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Local Gateway</p>
+            <h1 id="pageTitle">号池管理</h1>
+            <p id="pageSubtitle">统一入口、账号资产和请求监控。</p>
+          </div>
+          <div class="status-pills" aria-label="运行状态">
+            <span class="pill pill-green">已连接</span>
+            <span class="pill" id="headerPoolCount">0 Keys</span>
+            <span class="pill" id="headerRequestCount">0 Requests</span>
+          </div>
+        </header>
+
+        <section id="poolView" class="view active-view" aria-label="号池管理">
+          <section class="pool-hero">
+            <div class="hero-copy">
+              <span class="hero-kicker">Unified API</span>
+              <h2>一个 Key 管整个号池</h2>
+              <div class="endpoint-grid">
+                <div class="endpoint-item">
+                  <span>Base URL</span>
+                  <code id="poolBaseUrl">http://localhost:3131/pool/v1</code>
+                </div>
+                <div class="endpoint-item">
+                  <span>API Key</span>
+                  <code id="poolApiKey">123456</code>
+                </div>
+              </div>
+            </div>
+            <div class="hero-actions">
+              <button id="copyPoolBaseButton" class="soft-button" type="button">复制 Base URL</button>
+              <button id="copyPoolKeyButton" class="soft-button" type="button">复制 Key</button>
+              <button id="testPoolButton" class="primary-button" type="button">测试号池</button>
+            </div>
+          </section>
+
+          <section class="metric-grid" aria-label="号池统计">
+            <article class="metric-card">
+              <span>池内 Key</span>
+              <strong id="poolKeyCount">0</strong>
+              <small id="poolUpstream">https://llm.atxp.ai/v1</small>
+            </article>
+            <article class="metric-card">
+              <span>请求数</span>
+              <strong id="poolRequestCount">0</strong>
+              <small>本次运行记录</small>
+            </article>
+            <article class="metric-card">
+              <span>成功率</span>
+              <strong id="poolSuccessRate">0%</strong>
+              <small>最近 100 条</small>
+            </article>
+            <article class="metric-card">
+              <span>Tokens</span>
+              <strong id="poolTotalTokens">0</strong>
+              <small>已记录用量</small>
+            </article>
+          </section>
+
+          <section class="section-panel">
+            <div class="section-head">
+              <div>
+                <h2>账号资产</h2>
+                <p>sessions 目录中的可用账号。</p>
+              </div>
+              <button id="refreshPoolButton" class="soft-button" type="button">刷新</button>
+            </div>
+            <div id="accountCards" class="account-grid"></div>
+          </section>
+
+          <section class="section-panel">
+            <div class="section-head">
+              <div>
+                <h2>请求监控</h2>
+                <p>聚合代理经过本地时会记录状态和 token usage。</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>账号</th>
+                    <th>模型</th>
+                    <th>状态</th>
+                    <th>Tokens</th>
+                    <th>耗时</th>
+                  </tr>
+                </thead>
+                <tbody id="requestRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="registerView" class="view" aria-label="注册任务">
+          <section class="workbench">
+            <form id="jobForm" class="section-panel input-panel">
+              <div class="section-head">
+                <div>
+                  <h2>账号输入</h2>
+                  <p>每行一个账号，格式：邮箱----密码----id----token</p>
+                </div>
+                <button id="startButton" class="primary-button" type="submit">开始注册</button>
+              </div>
+
+              <label class="field">
+                <span>账号列表</span>
+                <textarea id="accountsText" name="accountsText" spellcheck="false" placeholder="example@outlook.com----X----client_id----refresh_token"></textarea>
+              </label>
+
+              <div class="options-grid">
+                <label class="field">
+                  <span>邮箱目录</span>
+                  <select id="mailbox" name="mailbox">
+                    <option value="both">INBOX + Junk</option>
+                    <option value="INBOX">只看 INBOX</option>
+                    <option value="Junk">只看 Junk</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>读取方式</span>
+                  <select id="mailMethod" name="mailMethod">
+                    <option value="api">oauth2.wryx.cc API</option>
+                    <option value="imap">Outlook IMAP</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>等待验证码</span>
+                  <input id="timeout" name="timeout" type="number" min="15" max="900" value="180" />
+                </label>
+                <label class="field">
+                  <span>轮询间隔</span>
+                  <input id="interval" name="interval" type="number" min="1" max="60" value="5" />
+                </label>
+              </div>
+
+              <details class="advanced">
+                <summary>高级选项</summary>
+                <div class="options-grid">
+                  <label class="check-field">
+                    <input id="fallbackImap" name="fallbackImap" type="checkbox" />
+                    <span>API 失败时回退 IMAP</span>
+                  </label>
+                  <label class="field">
+                    <span>HTTP 代理</span>
+                    <input id="proxyHttp" name="proxyHttp" type="text" placeholder="http://127.0.0.1:7890" />
+                  </label>
+                  <label class="field">
+                    <span>SOCKS5 代理</span>
+                    <input id="proxySocks5" name="proxySocks5" type="text" placeholder="socks5://127.0.0.1:7890" />
+                  </label>
+                </div>
+              </details>
+            </form>
+
+            <section class="section-panel log-panel" aria-label="实时日志">
+              <div class="section-head">
+                <div>
+                  <h2>实时日志</h2>
+                  <p id="activeJobText">等待任务开始</p>
+                </div>
+                <button id="stopButton" class="soft-button" type="button" disabled>停止任务</button>
+              </div>
+              <div id="logList" class="log-list" aria-live="polite"></div>
+            </section>
+          </section>
+
+          <section class="section-panel results-panel">
+            <div class="section-head">
+              <div>
+                <h2>任务队列</h2>
+                <p>注册链路和单账号 key 状态。</p>
+              </div>
+              <div class="button-row">
+                <button id="refreshButton" class="soft-button" type="button">刷新</button>
+                <a class="soft-link" href="/api/export.txt">导出 Key</a>
+              </div>
+            </div>
+            <div class="split">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>邮箱</th>
+                      <th>状态</th>
+                      <th>阶段</th>
+                      <th>账号 ID</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="taskRows"></tbody>
+                </table>
+              </div>
+              <aside id="detailPane" class="detail-pane">
+                <h3>账号详情</h3>
+                <p class="muted">选择一行任务后显示链路详情。</p>
+              </aside>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
