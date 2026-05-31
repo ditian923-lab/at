@@ -138,6 +138,13 @@ function getAccountStats(email) {
   return state.data.pool?.stats?.accounts?.find((item) => item.email === email) || null;
 }
 
+function officialTransactionTitle(item) {
+  if (item.model) return item.model;
+  if (item.direction === "outgoing") return "支出";
+  if (item.direction === "incoming") return "入账";
+  return item.description || item.type || "流水";
+}
+
 function renderRecentOfficialTransactions(official) {
   const items = official?.transactions?.items || [];
   if (!items.length) {
@@ -147,8 +154,11 @@ function renderRecentOfficialTransactions(official) {
     ${items
       .slice(0, 3)
       .map((item) => {
-        const title = item.model || item.description || item.type || "调用记录";
-        const meta = [formatMoney(item.amount), compactNumber(item.totalTokens || 0) + " tokens"]
+        const title = officialTransactionTitle(item);
+        const meta = [
+          `${formatMoney(item.amount)}${item.currency ? ` ${item.currency}` : ""}`,
+          item.totalTokens ? `${compactNumber(item.totalTokens)} tokens` : "",
+        ]
           .filter(Boolean)
           .join(" · ");
         return `<div class="mini-transaction-row">

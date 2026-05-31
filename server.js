@@ -49,8 +49,36 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function amountToNumber(value) {
+  if (value == null || value === "") return 0;
+
+  if (typeof value === "string" && /^0x[0-9a-f]+$/i.test(value)) {
+    return Number(BigInt(value)) / 1e18;
+  }
+
+  const number = toNumber(value);
+  if (Number.isInteger(number) && Math.abs(number) >= 1e12) {
+    return number / 1e18;
+  }
+  return number;
+}
+
 function roundMoney(value) {
   return Math.round(toNumber(value) * 100) / 100;
+}
+
+function normalizeTimestamp(value) {
+  if (value == null || value === "") return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const milliseconds = value < 1000000000000 ? value * 1000 : value;
+    return new Date(milliseconds).toISOString();
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const number = Number(value);
+    const milliseconds = number < 1000000000000 ? number * 1000 : number;
+    return new Date(milliseconds).toISOString();
+  }
+  return value;
 }
 
 function parseEmail(line) {
@@ -343,22 +371,26 @@ function normalizeTransactions(data) {
         : [];
   const items = rawItems.slice(0, OFFICIAL_TRANSACTION_LIMIT).map((item) => {
     const usage = pickTokenUsage(item);
-    const amount = roundMoney(item.amount ?? item.usd ?? item.cost ?? item.value ?? 0);
+    const amount = amountToNumber(item.amount ?? item.usd ?? item.cost ?? item.value ?? 0);
+    const direction = String(item.direction || "");
     return {
       id: String(item.id || item.transactionId || item.hash || ""),
       type: String(item.type || item.kind || item.category || ""),
-      amount,
-      description: String(item.description || item.memo || item.reason || item.model || ""),
+      direction,
+      currency: String(item.currency || ""),
+      amount: roundMoney(amount),
+      description: String(item.description || item.memo || item.reason || item.model || direction || ""),
       model: String(item.model || item.metadata?.model || item.details?.model || ""),
       status: String(item.status || ""),
-      createdAt: item.createdAt || item.created_at || item.date || item.timestamp || "",
+      createdAt: normalizeTimestamp(item.createdAt || item.created_at || item.date || item.timestamp || ""),
       ...usage,
     };
   });
 
   const spent = items.reduce((sum, item) => {
-    const text = `${item.type} ${item.description}`.toLowerCase();
+    const text = `${item.type} ${item.description} ${item.direction}`.toLowerCase();
     if (item.amount < 0) return sum + Math.abs(item.amount);
+    if (item.direction === "outgoing") return sum + Math.abs(item.amount);
     if (/(spend|spent|usage|debit|charge|consume|payment|call|request)/i.test(text)) {
       return sum + Math.abs(item.amount);
     }
