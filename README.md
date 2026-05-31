@@ -33,12 +33,6 @@ npm start
 http://localhost:3131
 ```
 
-Windows 下也可以使用：
-
-```text
-open_console.ps1
-```
-
 ## 聚合号池调用方式
 
 默认本地聚合接口：
@@ -90,11 +84,9 @@ example@outlook.com----X----client_id----refresh_token
 ## 目录说明
 
 ```text
-register.js              注册与提取 Key 的核心脚本
-server.js                本地 Web 服务和聚合号池代理
-public/                  前端页面
-open_console.ps1         Windows 启动辅助脚本
-sessions/                本地运行结果
+server.js        本地 Web 服务和聚合号池代理
+public/          前端页面
+sessions/        本地运行结果
 ```
 
 ## 注意
